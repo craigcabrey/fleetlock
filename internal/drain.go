@@ -21,8 +21,9 @@ func (s *Server) DrainNode(ctx context.Context, id string) error {
 	}
 
 	drainer := drain.New(&drain.Config{
-		Client: s.kubeClient,
-		Logger: s.log,
+		Client:  s.kubeClient,
+		Logger:  s.log,
+		Timeout: s.drainTimeout,
 	})
 	return drainer.Drain(ctx, node.GetName())
 }
@@ -36,8 +37,9 @@ func (s *Server) UncordonNode(ctx context.Context, id string) error {
 	}
 
 	drainer := drain.New(&drain.Config{
-		Client: s.kubeClient,
-		Logger: s.log,
+		Client:  s.kubeClient,
+		Logger:  s.log,
+		Timeout: s.drainTimeout,
 	})
 	return drainer.Uncordon(ctx, node.GetName())
 }

@@ -3,6 +3,8 @@ package drain
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
@@ -15,8 +17,9 @@ import (
 
 // Config configures a Drainer.
 type Config struct {
-	Client kubernetes.Interface
-	Logger *logrus.Logger
+	Client  kubernetes.Interface
+	Logger  *logrus.Logger
+	Timeout time.Duration
 }
 
 // Drainer manages cordoning nodes and evicting Pods.
@@ -32,15 +35,17 @@ type Drainer interface {
 // New returns a new Drainer.
 func New(config *Config) Drainer {
 	return &drainer{
-		client: config.Client,
-		log:    config.Logger,
+		client:  config.Client,
+		log:     config.Logger,
+		timeout: config.Timeout,
 	}
 }
 
 // drain is a Kubernetes node cordon and drainer.
 type drainer struct {
-	client kubernetes.Interface
-	log    *logrus.Logger
+	client  kubernetes.Interface
+	log     *logrus.Logger
+	timeout time.Duration
 }
 
 // Cordon marks a Kubernetes Node as unschedulable.
@@ -68,25 +73,54 @@ func (d *drainer) Drain(ctx context.Context, node string) error {
 
 	d.log.WithFields(fields).Info("drainer: draining node")
 
-	pods, err := d.getPodsForDeletion(ctx, node)
-	if err != nil {
-		d.log.WithFields(fields).Errorf("drainer: error getting pods: %v", err)
-		return err
-	}
-
-	for _, pod := range pods {
-		fields["pod"] = pod.GetName()
-		d.log.WithFields(fields).Info("drainer: evicting pod")
-
-		err := d.evictPod(ctx, pod)
+	start := time.Now()
+	for {
+		pods, err := d.getPodsForDeletion(ctx, node)
 		if err != nil {
-			d.log.WithFields(fields).Errorf("drainer: error evicting pod: %v", err)
+			d.log.WithFields(fields).Errorf("drainer: error getting pods: %v", err)
 			return err
 		}
+
+		if len(pods) == 0 {
+			break
+		}
+
+		podsDescription := ""
+		if len(pods) > 5 {
+			podsDescription = strings.Join(podNames(pods[:5]), ", ") + " ..."
+		} else {
+			podsDescription = strings.Join(podNames(pods), ", ")
+		}
+		d.log.WithFields(fields).Infof("drainer: waiting for %d pods to be evicted: %s", len(pods), podsDescription)
+
+		for _, pod := range pods {
+			fields["pod"] = pod.GetName()
+			d.log.WithFields(fields).Info("drainer: evicting pod")
+
+			err := d.evictPod(ctx, pod)
+			if err != nil {
+				d.log.WithFields(fields).Errorf("drainer: error evicting pod: %v", err)
+			}
+		}
+
+		if time.Since(start) > d.timeout {
+			d.log.WithFields(fields).Infof("drainer: waited maximum amount of time for evictions, continuing")
+			break
+		}
+
+		time.Sleep(5 * time.Second)
 	}
 
 	d.log.WithFields(fields).Info("drainer: drained node")
 	return nil
+}
+
+func podNames(pods []v1.Pod) []string {
+	names := make([]string, len(pods))
+	for i, pod := range pods {
+		names[i] = pod.GetName()
+	}
+	return names
 }
 
 // Lists pods on a node and filters our mirror and daemonset Pods.

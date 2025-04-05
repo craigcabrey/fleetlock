@@ -22,6 +22,7 @@ type Config struct {
 	Logger                 *logrus.Logger
 	MaintenanceWindowStart int
 	MaintenanceWindowStop  int
+	DrainTimeout           time.Duration
 }
 
 // Server implements the FleetLock protocol.
@@ -35,8 +36,9 @@ type Server struct {
 	metrics *metrics
 
 	// Kubernetes
-	namespace  string
-	kubeClient kubernetes.Interface
+	namespace    string
+	kubeClient   kubernetes.Interface
+	drainTimeout time.Duration
 }
 
 // NewServer returns a new fleetlock Server handler
@@ -83,6 +85,7 @@ func NewServer(config *Config) (http.Handler, error) {
 		metrics:                metrics,
 		namespace:              namespace,
 		kubeClient:             kubeClient,
+		drainTimeout:           config.DrainTimeout,
 	}
 
 	mux := http.NewServeMux()
